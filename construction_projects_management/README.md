@@ -28,13 +28,73 @@ construction_projects_management/
 - **Historical context**: Recent runs, risk trends, and scenario comparisons remain accessible for exec reviews.
 - **Accessibility**: Dark/light mode button works across all pages (Dashboard, Delay, Overrun, Chatbot) for field or office use.
 
-## Getting Started
+## First-Time Setup (After Cloning)
+
+**Important**: Model files (`.pkl`, `.joblib`, `.parquet`) and the database are excluded from git (they're large/generated files). You need to train the models first.
+
+### Step 1: Install Dependencies
+
+**Backend:**
+```bash
+cd backend
+python -m pip install -r requirements.txt
+```
+
+**Frontend:**
+```bash
+cd frontend
+npm install
+```
+
+### Step 2: Train the Models
+
+The cost overrun model needs to be trained before the API can work:
+
+```bash
+cd backend
+python train_cost_model.py
+```
+
+This will:
+- Load the dataset from `backend/dataset/Weather_Enriched_Projects_Final.csv`
+- Train CatBoost, LightGBM, and XGBoost models
+- Select the best performer (currently LightGBM)
+- Save artifacts to `backend/models/cost_overrun/`
+- Generate quantile models for confidence intervals
+- Create SHAP background sample
+
+**Note**: The delay prediction models (`delay_classifier_xgboost.pkl`, `delay_regressor_xgb_v2.pkl`) should already exist in `backend/models/`. If they're missing, you'll need to train them separately or obtain them from the original source.
+
+### Step 3: Verify Setup
+
+Check that models were created:
+```bash
+ls backend/models/cost_overrun/    # Should show cost_overrun_v2.0.0.joblib and background_v2.0.0.parquet
+ls backend/models/*.pkl            # Should show delay prediction models
+```
+
+### Step 4: Start the Services
+
+**Backend:**
+```bash
+cd backend
+python app.py                     # Starts on http://localhost:5000
+```
+
+The database (`backend/data/predictions.db`) will be created automatically on first prediction.
+
+**Frontend:**
+```bash
+cd frontend
+npm run dev                       # Starts on http://localhost:5173
+```
+
+## Getting Started (After Setup)
 
 ### Backend
 
 ```bash
 cd backend
-python -m pip install -r requirements.txt     # install Flask + ML deps
 python app.py                                 # start API on http://localhost:5000
 ```
 
