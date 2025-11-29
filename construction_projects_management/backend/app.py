@@ -5,6 +5,7 @@ import numpy as np
 from predict import DelayPredictor
 from services.cost_service import CostOverrunService
 from schemas import CostPredictionRequest, ScenarioSimulationRequest
+from storage import PredictionRepository
 import logging
 
 # Initialize Flask app
@@ -30,6 +31,9 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to load cost overrun models: {e}")
     cost_service = None
+
+# Initialize prediction repository for database storage
+prediction_repo = PredictionRepository()
 
 # ================================================================
 # HEALTH CHECK ENDPOINT
@@ -121,22 +125,39 @@ def predict_delay():
         logger.info("="*70 + "\n")
         
         # Build response
+        recommendations = generate_recommendations(result)
+        prediction_data = {
+            'is_delayed': bool(result['is_delayed']),
+            'delay_probability': float(result['delay_probability']),
+            'predicted_delay_days': int(result['predicted_delay_days']),
+            'risk_level': result['risk_level'],
+            'confidence': result['confidence'],
+            'extreme_override_applied': result['extreme_override_applied']
+        }
+        
         response = {
             'success': True,
-            'prediction': {
-                'is_delayed': bool(result['is_delayed']),
-                'delay_probability': float(result['delay_probability']),
-                'predicted_delay_days': int(result['predicted_delay_days']),
-                'risk_level': result['risk_level'],
-                'confidence': result['confidence'],
-                'extreme_override_applied': result['extreme_override_applied']
-            },
-            'recommendations': generate_recommendations(result),
+            'prediction': prediction_data,
+            'recommendations': recommendations,
             'model_info': {
                 'ensemble_used': use_ensemble,
                 'ensemble_available': predictor.ensemble_models is not None
             }
         }
+        
+        # Save prediction to database
+        try:
+            prediction_repo.log_delay_prediction(
+                input_payload=data,
+                output_payload={'prediction': prediction_data, 'model_info': response['model_info']},
+                recommendations=recommendations,
+                ensemble_used=use_ensemble,
+                model_version='v1.0.0'  # Update this if you version your delay models
+            )
+            logger.info("✅ Delay prediction saved to database")
+        except Exception as db_error:
+            logger.warning(f"⚠️ Failed to save delay prediction to database: {db_error}")
+            # Don't fail the request if database save fails
         
         return jsonify(response)
         
@@ -402,6 +423,53 @@ def get_cost_overrun_history():
         
     except Exception as e:
         logger.error(f"❌ History fetch error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+# ================================================================
+# DELAY PREDICTION HISTORY ENDPOINT
+# ================================================================
+@app.route('/api/predict/delay/history', methods=['GET'])
+def get_delay_history():
+    """
+    Get delay prediction history
+    """
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        history = prediction_repo.fetch_recent_delays(limit)
+        
+        return jsonify({
+            'success': True,
+            'history': history
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Delay history fetch error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+# ================================================================
+# DELAY PREDICTION STATISTICS ENDPOINT
+# ================================================================
+@app.route('/api/predict/delay/stats', methods=['GET'])
+def get_delay_stats():
+    """
+    Get aggregate statistics for delay predictions
+    """
+    try:
+        stats = prediction_repo.aggregate_delay_stats()
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Delay stats error: {e}", exc_info=True)
         return jsonify({
             'error': str(e),
             'success': False
