@@ -59,10 +59,10 @@ backend/models/cost_overrun/*.joblib
 backend/models/cost_overrun/*.parquet
 backend/catboost_info/
 # Delay model files
-backend/models/delay/*.pkl
-backend/models/delay/*.joblib
-backend/models/delay/*.json
-backend/models/delay/*.parquet
+# backend/models/delay/*.pkl
+# backend/models/delay/*.joblib
+# backend/models/delay/*.json
+# backend/models/delay/*.parquet
 
 # Database files
 backend/data/*.db
