@@ -1,0 +1,72 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.env/
+env/
+
+# Build
+build/
+dist/
+
+# Bytecode
+*.py[cod]
+
+# Logs
+*.log
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# ML Models & Artifacts (large files, can be regenerated)
+backend/models/*.pkl
+backend/models/*.json
+backend/models/cost_overrun/*.joblib
+backend/models/cost_overrun/*.parquet
+backend/catboost_info/
+
+# Database files
+backend/data/*.db
+backend/data/*.sqlite
+
+# Dataset (if large, consider using Git LFS or excluding)
+# backend/dataset/*.csv
+
+# Environment variables
+.env
+.env.local
+.env.*.local
