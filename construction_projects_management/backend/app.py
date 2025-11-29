@@ -1,15 +1,14 @@
 # backend/app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import numpy as np
 from predict import DelayPredictor
-from services.cost_service import CostOverrunService
-from schemas import CostPredictionRequest, ScenarioSimulationRequest
 import logging
 
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)  # Allow frontend to call this API
- 
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,17 +16,10 @@ logger = logging.getLogger(__name__)
 # Load models once at startup (faster predictions)
 try:
     predictor = DelayPredictor(model_dir='models')
-    logger.info("Delay models loaded successfully.")
+    logger.info("✅ Models loaded successfully!")
 except Exception as e:
-    logger.error(f"Failed to load delay models: {e}")
+    logger.error(f"❌ Failed to load models: {e}")
     predictor = None
-
-try:
-    cost_service = CostOverrunService()
-    logger.info("Cost overrun service initialized.")
-except Exception as e:
-    logger.error(f"Failed to initialize cost overrun service: {e}")
-    cost_service = None
 
 # ================================================================
 # HEALTH CHECK ENDPOINT
@@ -37,9 +29,8 @@ def health_check():
     """Check if API is running"""
     return jsonify({
         'status': 'healthy',
-        'delay_models_loaded': predictor is not None,
-        'cost_model_loaded': cost_service is not None,
-        'cost_model_version': getattr(cost_service, 'model_version', None) if cost_service else None
+        'models_loaded': predictor is not None,
+        'ensemble_available': predictor.ensemble_models is not None if predictor else False
     })
 
 # ================================================================
@@ -67,7 +58,8 @@ def predict_delay():
         "totalsquarefootbuild": 50000,
         "final_project_type": "Residential/Group Housing",
         "promotertype": "COMPANY",
-        "districttype": "Ahmedabad"
+        "districttype": "Ahmedabad",
+        "use_ensemble": true  // Optional: use ensemble for more accuracy
     }
     """
     try:
@@ -76,22 +68,23 @@ def predict_delay():
         
         # Get input data
         data = request.get_json()
-
-         # DEBUG: Print received data
-        print("\n" + "="*70)
-        print("RAW INPUT DATA:")
-        print(f"  Cost (INR): {data.get('final_project_cost'):,}")
-        print(f"  Units: {data.get('totalunits')}")
-        print(f"  Duration: {data.get('planned_duration_days')} days")
-        print(f"  Progress: {data.get('progress_ratio')*100:.1f}%")
-        print(f"  Budget Overrun: {data.get('budget_overrun_percent')}%")
-        print(f"  Land Util: {data.get('land_utilization')}")
-        print(f"  Type: {data.get('final_project_type')}")
-        print(f"  Promoter: {data.get('promotertype')}")
-        print("="*70)
         
         if not data:
             return jsonify({'error': 'No input data provided'}), 400
+        
+        # Extract use_ensemble flag (default: False for speed)
+        use_ensemble = data.pop('use_ensemble', False)
+        
+        # DEBUG: Print received data
+        logger.info("="*70)
+        logger.info("📥 RAW INPUT DATA:")
+        logger.info(f"  Cost: ₹{data.get('final_project_cost', 0):,}")
+        logger.info(f"  Units: {data.get('totalunits', 0)}")
+        logger.info(f"  Duration: {data.get('planned_duration_days', 0)} days")
+        logger.info(f"  Progress: {data.get('progress_ratio', 0)*100:.1f}%")
+        logger.info(f"  Budget Overrun: {data.get('budget_overrun_percent', 0)}%")
+        logger.info(f"  Use Ensemble: {use_ensemble}")
+        logger.info("="*70)
         
         # Validate required fields
         required_fields = [
@@ -106,17 +99,18 @@ def predict_delay():
             }), 400
         
         # Make prediction
-        result = predictor.predict_single(data)
-
-         # DEBUG PREDICTION OUTPUT
-        print("PREDICTION RESULT:")
-        print(f"  Is Delayed: {result['is_delayed']}")
-        print(f"  Probability: {result['delay_probability']*100:.1f}%")
-        print(f"  Predicted Days: {result['predicted_delay_days']}")
-        print(f"  Risk Level: {result['risk_level']}")
-        print("="*70 + "\n")
+        result = predictor.predict_single(data, use_ensemble=use_ensemble, debug=True)
         
-        # Add additional info
+        # 🔥 DEBUG PREDICTION OUTPUT
+        logger.info("📤 PREDICTION RESULT:")
+        logger.info(f"  Is Delayed: {result['is_delayed']}")
+        logger.info(f"  Probability: {result['delay_probability']*100:.1f}%")
+        logger.info(f"  Predicted Days: {result['predicted_delay_days']}")
+        logger.info(f"  Risk Level: {result['risk_level']}")
+        logger.info(f"  Override Applied: {result['extreme_override_applied']}")
+        logger.info("="*70 + "\n")
+        
+        # Build response
         response = {
             'success': True,
             'prediction': {
@@ -124,103 +118,89 @@ def predict_delay():
                 'delay_probability': float(result['delay_probability']),
                 'predicted_delay_days': int(result['predicted_delay_days']),
                 'risk_level': result['risk_level'],
-                'confidence': 'High' if result['delay_probability'] > 0.7 or result['delay_probability'] < 0.3 else 'Medium'
+                'confidence': result['confidence'],
+                'extreme_override_applied': result['extreme_override_applied']
             },
-            'recommendations': generate_recommendations(result)
+            'recommendations': generate_recommendations(result),
+            'model_info': {
+                'ensemble_used': use_ensemble,
+                'ensemble_available': predictor.ensemble_models is not None
+            }
         }
         
-        logger.info(f"Prediction: {result['risk_level']} risk ({result['delay_probability']*100:.1f}%)")
         return jsonify(response)
         
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"❌ Prediction error: {e}", exc_info=True)
         return jsonify({
             'error': str(e),
             'success': False
         }), 500
 
 # ================================================================
-# COST OVERRUN PREDICTION ENDPOINT
-# ================================================================
-@app.route('/api/predict/cost-overrun', methods=['POST'])
-def predict_cost_overrun():
-    """Predict cost overrun percentage and risk level."""
-    if cost_service is None:
-        return jsonify({'error': 'Cost overrun service unavailable'}), 500
-
-    try:
-        payload = CostPredictionRequest(**(request.get_json() or {}))
-        result = cost_service.predict(payload)
-        return jsonify({'success': True, 'prediction': result.model_dump()})
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Cost prediction failed: %s", exc)
-        return jsonify({'error': str(exc), 'success': False}), 400
-
-
-@app.route('/api/predict/cost-overrun/scenario', methods=['POST'])
-def simulate_cost_overrun():
-    if cost_service is None:
-        return jsonify({'error': 'Cost overrun service unavailable'}), 500
-
-    try:
-        payload = ScenarioSimulationRequest(**(request.get_json() or {}))
-        simulations = cost_service.simulate(payload)
-        return jsonify({'success': True, 'simulations': simulations})
-    except Exception as exc:  # noqa: broad-except
-        logger.error("Scenario simulation failed: %s", exc)
-        return jsonify({'error': str(exc), 'success': False}), 400
-
-
-@app.route('/api/predict/cost-overrun/history', methods=['GET'])
-def cost_prediction_history():
-    if cost_service is None:
-        return jsonify({'error': 'Cost overrun service unavailable'}), 500
-
-    limit = int(request.args.get('limit', 50))
-    history = cost_service.history(limit)
-    return jsonify({'success': True, 'history': history})
-
-
-# ================================================================
 # BATCH PREDICTION ENDPOINT (For Dashboard)
 # ================================================================
 @app.route('/api/predict/batch', methods=['POST'])
 def predict_batch():
-    """Predict delays for multiple projects"""
+    """
+    Predict delays for multiple projects.
+    
+    Expected JSON Input:
+    {
+        "projects": [
+            { /* project 1 data */ },
+            { /* project 2 data */ },
+            ...
+        ],
+        "use_ensemble": false  // Optional
+    }
+    """
     try:
         if predictor is None:
             return jsonify({'error': 'Models not loaded'}), 500
         
         data = request.get_json()
         projects = data.get('projects', [])
+        use_ensemble = data.get('use_ensemble', False)
         
         if not projects:
             return jsonify({'error': 'No projects provided'}), 400
         
+        logger.info(f"📊 Batch prediction for {len(projects)} projects (ensemble={use_ensemble})")
+        
         results = []
-        for project in projects:
+        for idx, project in enumerate(projects):
             try:
-                result = predictor.predict_single(project)
+                result = predictor.predict_single(project, use_ensemble=use_ensemble)
                 results.append({
-                    'project_id': project.get('project_id', 'unknown'),
+                    'project_id': project.get('project_id', f'project_{idx}'),
                     'is_delayed': bool(result['is_delayed']),
                     'delay_probability': float(result['delay_probability']),
                     'predicted_delay_days': int(result['predicted_delay_days']),
-                    'risk_level': result['risk_level']
+                    'risk_level': result['risk_level'],
+                    'confidence': result['confidence'],
+                    'extreme_override_applied': result['extreme_override_applied']
                 })
             except Exception as e:
+                logger.error(f"Error predicting project {idx}: {e}")
                 results.append({
-                    'project_id': project.get('project_id', 'unknown'),
+                    'project_id': project.get('project_id', f'project_{idx}'),
                     'error': str(e)
                 })
         
         return jsonify({
             'success': True,
-            'predictions': results
+            'predictions': results,
+            'summary': {
+                'total': len(results),
+                'high_risk': sum(1 for r in results if r.get('risk_level') == 'High'),
+                'medium_risk': sum(1 for r in results if r.get('risk_level') == 'Medium'),
+                'low_risk': sum(1 for r in results if r.get('risk_level') == 'Low')
+            }
         })
         
     except Exception as e:
-        logger.error(f"Batch prediction error: {e}")
+        logger.error(f"❌ Batch prediction error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 # ================================================================
@@ -228,29 +208,64 @@ def predict_batch():
 # ================================================================
 @app.route('/api/dashboard/stats', methods=['GET'])
 def dashboard_stats():
-    """Get real-time dashboard statistics derived from prediction history."""
+    """Get dashboard statistics (mock for now, replace with real DB queries)"""
     try:
-        if cost_service is None:
-            return jsonify({'error': 'Cost overrun service unavailable'}), 500
-
-        repo_stats = cost_service.repo.aggregate_stats()
+        # TODO: Replace with actual database queries
         stats = {
-            'total_predictions': repo_stats['total_predictions'],
-            'avg_overrun_percent': repo_stats['avg_overrun_percent'],
-            'avg_predicted_final_cost': repo_stats['avg_final_cost'],
-            'high_risk_count': repo_stats['risk_counts']['High'],
-            'medium_risk_count': repo_stats['risk_counts']['Medium'],
-            'low_risk_count': repo_stats['risk_counts']['Low'],
-            'latest_prediction_at': repo_stats['latest_prediction_at']
+            'total_projects': 156,
+            'delayed_projects': 42,
+            'on_time_projects': 114,
+            'avg_delay_days': 78,
+            'high_risk_count': 12,
+            'medium_risk_count': 28,
+            'low_risk_count': 116,
+            'total_cost_overrun': 450000
         }
-
+        
         return jsonify({
             'success': True,
             'stats': stats
         })
         
     except Exception as e:
-        logger.error(f"Dashboard stats error: {e}")
+        logger.error(f"❌ Dashboard stats error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ================================================================
+# MODEL INFO ENDPOINT
+# ================================================================
+@app.route('/api/model/info', methods=['GET'])
+def model_info():
+    """Get information about loaded models"""
+    try:
+        if predictor is None:
+            return jsonify({'error': 'Models not loaded'}), 500
+        
+        info = {
+            'classifier': {
+                'type': type(predictor.classifier).__name__,
+                'loaded': True
+            },
+            'regressor': {
+                'type': type(predictor.regressor).__name__,
+                'loaded': True
+            },
+            'ensemble': {
+                'available': predictor.ensemble_models is not None,
+                'models_count': len(predictor.ensemble_models) if predictor.ensemble_models else 0,
+                'models': list(predictor.ensemble_models.keys()) if predictor.ensemble_models else []
+            },
+            'threshold': predictor.threshold,
+            'features_count': 50  # Approximate
+        }
+        
+        return jsonify({
+            'success': True,
+            'model_info': info
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Model info error: {e}")
         return jsonify({'error': str(e)}), 500
 
 # ================================================================
@@ -262,20 +277,30 @@ def generate_recommendations(result):
     
     prob = result['delay_probability']
     days = result['predicted_delay_days']
+    override = result['extreme_override_applied']
+    
+    if override:
+        recommendations.append("🚨 CRITICAL: Extreme risk conditions detected - IMMEDIATE EXECUTIVE ACTION REQUIRED")
     
     if prob > 0.7:
-        recommendations.append("High delay risk detected - Immediate action required.")
-        recommendations.append("Consider increasing workforce allocation.")
-        recommendations.append("Review critical path activities.")
+        recommendations.append("🚨 High delay risk detected - Immediate action required")
+        recommendations.append("👥 Consider increasing workforce allocation")
+        recommendations.append("📊 Review critical path activities")
+        recommendations.append("💰 Prepare for potential budget revision")
     elif prob > 0.4:
-        recommendations.append("Moderate delay risk - Enhanced monitoring recommended.")
-        recommendations.append("Identify potential bottlenecks early.")
+        recommendations.append("⚠️ Moderate delay risk - Enhanced monitoring recommended")
+        recommendations.append("🔍 Identify potential bottlenecks early")
+        recommendations.append("📅 Review project timeline weekly")
     else:
-        recommendations.append("Low delay risk - Continue normal monitoring.")
+        recommendations.append("✅ Low delay risk - Continue normal monitoring")
+        recommendations.append("📈 Maintain current progress tracking")
     
-    if days > 60:
-        recommendations.append(f"Predicted delay of {days} days requires timeline revision.")
-        recommendations.append("Budget for potential cost escalations.")
+    if days > 90:
+        recommendations.append(f"📅 Predicted delay of {days} days requires immediate timeline revision")
+        recommendations.append("💰 Budget for significant cost escalations")
+        recommendations.append("👷 Consider accelerated construction methods")
+    elif days > 30:
+        recommendations.append(f"⏰ Predicted delay of {days} days - Plan mitigation strategies")
     
     return recommendations
 
