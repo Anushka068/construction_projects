@@ -3,6 +3,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
 from predict import DelayPredictor
+from services.cost_service import CostOverrunService
+from schemas import CostPredictionRequest, ScenarioSimulationRequest
 import logging
 
 # Initialize Flask app
@@ -16,10 +18,18 @@ logger = logging.getLogger(__name__)
 # Load models once at startup (faster predictions)
 try:
     predictor = DelayPredictor(model_dir='models')
-    logger.info("✅ Models loaded successfully!")
+    logger.info("✅ Delay prediction models loaded successfully!")
 except Exception as e:
-    logger.error(f"❌ Failed to load models: {e}")
+    logger.error(f"❌ Failed to load delay models: {e}")
     predictor = None
+
+# Load cost overrun service
+try:
+    cost_service = CostOverrunService()
+    logger.info("✅ Cost overrun models loaded successfully!")
+except Exception as e:
+    logger.error(f"❌ Failed to load cost overrun models: {e}")
+    cost_service = None
 
 # ================================================================
 # HEALTH CHECK ENDPOINT
@@ -267,6 +277,135 @@ def model_info():
     except Exception as e:
         logger.error(f"❌ Model info error: {e}")
         return jsonify({'error': str(e)}), 500
+
+# ================================================================
+# COST OVERRUN PREDICTION ENDPOINT
+# ================================================================
+@app.route('/api/predict/cost-overrun', methods=['POST'])
+def predict_cost_overrun():
+    """
+    Predict cost overrun for a project
+    
+    Expected JSON Input:
+    {
+        "final_project_cost": 50000000,
+        "totalunits": 100,
+        "planned_duration_days": 365,
+        "final_project_type": "Residential/Group Housing",
+        "promotertype": "COMPANY",
+        "districttype": "Ahmedabad",
+        ... (other optional fields)
+    }
+    """
+    try:
+        if cost_service is None:
+            return jsonify({'error': 'Cost overrun models not loaded'}), 500
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No input data provided'}), 400
+        
+        # Validate required fields
+        required_fields = [
+            'final_project_cost', 'totalunits', 'planned_duration_days',
+            'final_project_type', 'promotertype', 'districttype'
+        ]
+        
+        missing_fields = [f for f in required_fields if f not in data]
+        if missing_fields:
+            return jsonify({
+                'error': f'Missing required fields: {", ".join(missing_fields)}'
+            }), 400
+        
+        # Create request object
+        try:
+            request_obj = CostPredictionRequest(**data)
+        except Exception as e:
+            return jsonify({
+                'error': f'Invalid input data: {str(e)}'
+            }), 400
+        
+        # Make prediction
+        result = cost_service.predict(request_obj, persist=True)
+        
+        # Build response
+        response = {
+            'success': True,
+            'prediction': result.model_dump()
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"❌ Cost overrun prediction error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+# ================================================================
+# COST OVERRUN SCENARIO SIMULATION ENDPOINT
+# ================================================================
+@app.route('/api/predict/cost-overrun/scenario', methods=['POST'])
+def predict_cost_overrun_scenario():
+    """
+    Run scenario simulations for cost overrun
+    """
+    try:
+        if cost_service is None:
+            return jsonify({'error': 'Cost overrun models not loaded'}), 500
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No input data provided'}), 400
+        
+        try:
+            request_obj = ScenarioSimulationRequest(**data)
+        except Exception as e:
+            return jsonify({
+                'error': f'Invalid input data: {str(e)}'
+            }), 400
+        
+        simulations = cost_service.simulate(request_obj)
+        
+        return jsonify({
+            'success': True,
+            'simulations': simulations
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Scenario simulation error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
+
+# ================================================================
+# COST OVERRUN HISTORY ENDPOINT
+# ================================================================
+@app.route('/api/predict/cost-overrun/history', methods=['GET'])
+def get_cost_overrun_history():
+    """
+    Get prediction history
+    """
+    try:
+        if cost_service is None:
+            return jsonify({'error': 'Cost overrun models not loaded'}), 500
+        
+        limit = request.args.get('limit', 50, type=int)
+        history = cost_service.history(limit)
+        
+        return jsonify({
+            'success': True,
+            'history': history
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ History fetch error: {e}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'success': False
+        }), 500
 
 # ================================================================
 # HELPER FUNCTIONS

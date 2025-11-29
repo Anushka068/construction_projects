@@ -172,18 +172,32 @@ class CostOverrunService:
         record = payload.dict()
         df = pd.DataFrame([record])
 
-        # Fill missing numeric fields with sensible defaults
+        # Fill missing numeric fields with sensible defaults and ensure proper types
         for col in BASE_NUMERIC_FEATURES:
             if col not in df.columns:
                 df[col] = 0.0
+            else:
+                # Convert to numeric, replacing any non-numeric values with 0.0
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        
         for col in CATEGORICAL_FEATURES:
             if col not in df.columns:
                 df[col] = "Unknown"
+            else:
+                # Ensure categorical fields are strings
+                df[col] = df[col].astype(str)
 
         df = engineer_features(df)
+        
+        # Ensure all numeric columns are properly typed after feature engineering
+        for col in BASE_NUMERIC_FEATURES + DERIVED_FEATURES:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        
         for col in CATEGORICAL_FEATURES:
             if col in df.columns:
                 df[col] = df[col].astype(str).astype("category")
+        
         df = df[self.feature_columns]
         return df
 
