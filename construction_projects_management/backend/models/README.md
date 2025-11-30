@@ -6,12 +6,14 @@ This directory contains trained ML models for delay and cost overrun prediction.
 
 ### Delay Prediction Models
 These should be present for delay prediction to work:
-- `delay_classifier_xgboost.pkl` - Classifier to predict if a project will be delayed
-- `delay_regressor_xgb_v2.pkl` - Regressor to predict delay days
-- `classifier_preprocessor.pkl` - Preprocessor for classifier
-- `regressor_preprocessor.pkl` - Preprocessor for regressor
-- `delay_regressor_xgb_v2.json` - Model metadata (optional)
-
+- `classifier.pkl` - Main classifier that predicts whether the project will be delayed
+- `classifier_preprocessor.pkl` - Preprocessor pipeline for the classifier
+- `regressor.pkl` - Regression model to predict expected delay days
+- `regressor_preprocessor.pkl` - Preprocessor pipeline for the regressor
+- `ensemble_models.pkl` - Collection of models used for ensemble delay-day prediction
+- `ensemble_weights.pkl` - Weights for each ensemble model
+- `predictor.pkl` - Metadata/backup predictor bundle (optional, not required for runtime)
+  
 **Note**: If these files are missing, delay prediction endpoints will return errors. You'll need to train them separately or obtain them from the original source.
 
 ### Cost Overrun Models
