@@ -1,49 +1,48 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
 
 export default function PredictionSummary() {
+  const [last, setLast] = useState(null);
+
+  useEffect(() => {
+    async function loadLatest() {
+      const res = await axios.get("http://localhost:5000/api/predict/delay/history?limit=1");
+      setLast(res.data.history[0]);
+    }
+    loadLatest();
+  }, []);
+
+  if (!last) return null;
+
   return (
-    <div className="rounded-2xl shadow-lg p-6" style={{
-      background: "linear-gradient(135deg,#4f46e5,#8b5cf6)",
-      color: "white",
-      border: "1px solid rgba(255,255,255,0.06)"
-    }}>
-      <div className="flex items-center gap-3 mb-6">
-        <span className="text-3xl">🔮</span>
-        <div>
-          <h3 className="text-xl font-bold">AI Predictions</h3>
-          <p className="text-indigo-200 text-sm">30-day forecast</p>
-        </div>
-      </div>
+    <div className="rounded-2xl shadow-lg p-6"
+      style={{
+        background: "linear-gradient(135deg,#4f46e5,#8b5cf6)",
+        color: "white"
+      }}
+    >
+      <h3 className="text-xl font-bold mb-4">Latest Prediction</h3>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/10">
-          <div className="text-indigo-200 text-xs mb-2">Delay Probability</div>
-          <div className="text-4xl font-bold">62%</div>
-          <div className="text-xs text-indigo-200 mt-2">↑ 8% from last month</div>
+        <div className="bg-white/10 p-4 rounded-xl">
+          <div className="text-indigo-200 text-xs">Delay Probability</div>
+          <div className="text-4xl font-bold">
+            {(last.delay_probability * 100).toFixed(1)}%
+          </div>
         </div>
 
-        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 border border-white/10">
-          <div className="text-indigo-200 text-xs mb-2">Expected Overrun</div>
-          <div className="text-4xl font-bold">$45K</div>
-          <div className="text-xs text-indigo-200 mt-2">High confidence: 87%</div>
+        <div className="bg-white/10 p-4 rounded-xl">
+          <div className="text-indigo-200 text-xs">Predicted Delay</div>
+          <div className="text-4xl font-bold">{last.predicted_delay_days} days</div>
         </div>
       </div>
 
-      <div className="bg-white/6 backdrop-blur-sm rounded-xl p-4 border border-white/6">
-        <div className="text-sm font-semibold mb-3">🎯 Recommendations</div>
-        <ul className="space-y-2 text-sm">
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-300">•</span>
-            <span>Reallocate 2x manpower to critical path</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-300">•</span>
-            <span>Lock material prices for 4 weeks</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-emerald-300">•</span>
-            <span>Review Sabarkantha Bridge timeline</span>
-          </li>
+      <div className="bg-white/10 p-4 rounded-xl">
+        <div className="text-sm font-semibold">Recommendation</div>
+        <ul className="text-sm mt-2">
+          {last.recommendations.slice(0, 3).map((rec, i) => (
+            <li key={i}>• {rec}</li>
+          ))}
         </ul>
       </div>
     </div>
